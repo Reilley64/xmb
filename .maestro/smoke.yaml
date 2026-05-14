@@ -1,0 +1,10 @@
+appId: com.anonymous.myexpoapp
+---
+- launchApp
+# Settings column icon is always rendered (unconditional in MenuList)
+- assertVisible: "Settings"
+# Navigate to Settings to verify its items are accessible
+- pressKey: Remote Dpad Left
+- waitForAnimationToEnd
+- assertVisible: "Choose ROMs folder"
+- assertVisible: "Refresh system config"

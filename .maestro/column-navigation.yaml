@@ -1,0 +1,16 @@
+appId: com.anonymous.myexpoapp
+---
+- launchApp
+# Initial colIdx=1 — navigate left to select Settings (colIdx=0)
+- pressKey: Remote Dpad Left
+- waitForAnimationToEnd
+- assertVisible: "Settings"
+# Navigate right — back to first system column
+- pressKey: Remote Dpad Right
+- waitForAnimationToEnd
+# Settings is still rendered (just de-selected)
+- assertVisible: "Settings"
+# Navigate fully left again to confirm we can round-trip without crashing
+- pressKey: Remote Dpad Left
+- waitForAnimationToEnd
+- assertVisible: "Settings"

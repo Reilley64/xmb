@@ -1,14 +1,15 @@
-import { ScreenContent } from 'components/ScreenContent';
-import { StatusBar } from 'expo-status-bar';
+import "./global.css";
 
-import './global.css';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar } from "expo-status-bar";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+
+import { Xmb } from "@/components/pages/xmb";
 
 export default function App() {
-  return (
-    <SafeAreaProvider>
-      <ScreenContent title="Home" path="App.tsx"></ScreenContent>
-      <StatusBar style="auto" />
-    </SafeAreaProvider>
-  );
+	return (
+		<SafeAreaProvider>
+			<Xmb />
+			<StatusBar style="light" />
+		</SafeAreaProvider>
+	);
 }

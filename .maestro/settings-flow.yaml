@@ -1,0 +1,18 @@
+appId: com.anonymous.myexpoapp
+---
+- launchApp
+# Wait for the app to be ready before sending input
+- assertVisible: "Settings"
+# Navigate left to select the Settings column (colIdx=0)
+- pressKey: Remote Dpad Left
+- waitForAnimationToEnd
+# Both settings items should be visible in the list
+- assertVisible: "Choose ROMs folder"
+- assertVisible: "Refresh system config"
+# Navigate down to move focus to the first item
+- pressKey: Remote Dpad Down
+- waitForAnimationToEnd
+# Scroll back up — should return to top without crashing
+- pressKey: Remote Dpad Up
+- waitForAnimationToEnd
+- assertVisible: "Choose ROMs folder"
