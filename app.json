@@ -2,6 +2,7 @@
   "expo": {
     "name": "xmb",
     "slug": "xmb",
+    "scheme": "xmb",
     "version": "1.0.0",
     "web": {
       "favicon": "./assets/favicon.png"

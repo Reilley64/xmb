@@ -1,12 +1,11 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Effect } from "effect";
 import { Directory, File } from "expo-file-system";
 
+import { STORAGE_KEYS } from "@/constants/storageKeys";
 import { getDb } from "./db";
 import { AsyncStorageError, DatabaseError, FilesystemError } from "./errors";
-import { getSystemConfig } from "./systemConfig";
-
-export const ROM_BASE_PATH_KEY = "romBasePath";
+import { readStorage } from "./http";
+import { type EsSystem, getSystemConfig } from "./systemConfig";
 
 export function nameFromUri(uri: string): string {
 	return decodeURIComponent(uri.replace(/\/$/, "").split("/").pop() ?? "");
@@ -38,20 +37,17 @@ export const scanRoms = (
 		const resolvedPath =
 			basePath !== undefined
 				? basePath
-				: yield* Effect.tryPromise({
-						try: () => AsyncStorage.getItem(ROM_BASE_PATH_KEY),
-						catch: (e) =>
-							new AsyncStorageError({
-								op: "get",
-								key: ROM_BASE_PATH_KEY,
-								cause: e,
-							}),
-					});
+				: yield* readStorage(STORAGE_KEYS.ROM_BASE_PATH);
 
 		if (!resolvedPath) return;
 
 		const systems = yield* getSystemConfig().pipe(
-			Effect.catchAll(() => Effect.succeed([])),
+			Effect.catchAll((e) =>
+				Effect.sync(() => {
+					console.warn("[scanRoms] system config unavailable", e._tag);
+					return [] as EsSystem[];
+				}),
+			),
 		);
 		const systemMap = new Map(systems.map((s) => [s.name, s]));
 
@@ -105,9 +101,9 @@ export const scanRoms = (
 			const extSet = new Set(system.extensions);
 			const romFiles = yield* Effect.try({
 				try: () =>
-					entry.list().filter((e): e is File => {
-						if (!(e instanceof File)) return false;
-						const name = nameFromUri(e.uri);
+					entry.list().filter((item): item is File => {
+						if (!(item instanceof File)) return false;
+						const name = nameFromUri(item.uri);
 						const dot = name.lastIndexOf(".");
 						return dot !== -1 && extSet.has(name.slice(dot).toLowerCase());
 					}),

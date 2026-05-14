@@ -8,6 +8,7 @@ vi.mock("../http", () => ({
 }));
 
 import { fetchText, readStorage, writeStorage } from "../http";
+import { NetworkFetchError } from "../errors";
 import { normalizeCommands, parseExtensions, parseXml, getSystemConfig } from "../systemConfig";
 
 const NES_SYSTEM_XML = `<?xml version="1.0"?>
@@ -178,7 +179,7 @@ describe("getSystemConfig Effect", () => {
 	it("fails with ConfigUnavailableError when both fetches fail and no cache", async () => {
 		vi.mocked(readStorage).mockReturnValue(Effect.succeed(null));
 		vi.mocked(fetchText).mockReturnValue(
-			Effect.fail({ _tag: "NetworkFetchError", url: "http://x", cause: new Error() }),
+			Effect.fail(new NetworkFetchError({ url: "http://x", cause: new Error() })),
 		);
 
 		const exit = await Effect.runPromiseExit(getSystemConfig());
@@ -194,7 +195,7 @@ describe("getSystemConfig Effect", () => {
 		const stale = JSON.stringify([{ name: "gb", fullname: "Game Boy", extensions: [".gb"], commands: [] }]);
 		vi.mocked(readStorage).mockReturnValue(Effect.succeed(stale));
 		vi.mocked(fetchText).mockReturnValue(
-			Effect.fail({ _tag: "NetworkFetchError", url: "http://x", cause: new Error() }),
+			Effect.fail(new NetworkFetchError({ url: "http://x", cause: new Error() })),
 		);
 
 		const result = await Effect.runPromise(getSystemConfig(true));

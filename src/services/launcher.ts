@@ -1,16 +1,17 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Effect } from "effect";
 import { startActivityAsync } from "expo-intent-launcher";
 
 import type { Game } from "@/data/systems";
+import { STORAGE_KEYS } from "@/constants/storageKeys";
 import { getDb } from "./db";
 import {
 	AllCandidatesFailedError,
-	AsyncStorageError,
+	type AsyncStorageError,
 	LaunchError,
 } from "./errors";
 import type { FindRules } from "./findRules";
 import { getFindRules } from "./findRules";
+import { readStorage } from "./http";
 
 // Android Intent flags
 const FLAG_GRANT_READ_URI_PERMISSION = 0x00000001;
@@ -137,15 +138,9 @@ export const resolveCommands = (
 		const [findRules, safTreeUri] = yield* Effect.all(
 			[
 				getFindRules().pipe(Effect.orElseSucceed(() => ({}) as FindRules)),
-				Effect.tryPromise({
-					try: () => AsyncStorage.getItem("romSafTreeUri"),
-					catch: (e) =>
-						new AsyncStorageError({
-							op: "get",
-							key: "romSafTreeUri",
-							cause: e,
-						}),
-				}).pipe(Effect.orElseSucceed(() => null)),
+				readStorage(STORAGE_KEYS.ROM_SAF_TREE_URI).pipe(
+					Effect.orElseSucceed(() => null),
+				),
 			],
 			{ concurrency: "unbounded" },
 		);
@@ -190,25 +185,13 @@ export const launchRom = (
 	game: Game,
 	intent: LaunchIntent,
 ): Effect.Effect<void, AllCandidatesFailedError> => {
-	const sentinel = Effect.fail(
-		new LaunchError({
-			pkg: "",
-			activity: "",
-			cause: new Error("no candidates"),
-		}),
-	) as Effect.Effect<void, LaunchError>;
-
-	const attemptLaunch = intent.candidates
-		.reduce(
-			(acc, candidate) =>
-				acc.pipe(Effect.orElse(() => tryCandidate(intent, candidate))),
-			sentinel,
-		)
-		.pipe(
-			Effect.mapError(
-				() => new AllCandidatesFailedError({ candidates: intent.candidates }),
-			),
-		);
+	const attemptLaunch = Effect.firstSuccessOf(
+		intent.candidates.map((candidate) => tryCandidate(intent, candidate)),
+	).pipe(
+		Effect.mapError(
+			() => new AllCandidatesFailedError({ candidates: intent.candidates }),
+		),
+	);
 
 	const updatePlayCount = getDb.pipe(
 		Effect.flatMap((db) =>

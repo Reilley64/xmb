@@ -49,7 +49,7 @@ export function XmbLayout({ colIdx, children, overlay }: XmbLayoutProps) {
 		<View className="flex-1">
 			<VideoView
 				player={player}
-				style={StyleSheet.absoluteFillObject}
+				style={StyleSheet.absoluteFill}
 				contentFit="cover"
 				nativeControls={false}
 			/>

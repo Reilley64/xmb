@@ -19,6 +19,7 @@
 		"@tailwindcss/postcss": "^4.1.13",
 		"effect": "^3.21.2",
 		"expo": "^55.0.0",
+		"expo-dev-client": "^55.0.33",
 		"expo-file-system": "~55.0.20",
 		"expo-intent-launcher": "^55.0.12",
 		"expo-linear-gradient": "^55.0.14",

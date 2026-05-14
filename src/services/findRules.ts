@@ -1,14 +1,12 @@
-import { Effect, Either } from "effect";
+import { Effect } from "effect";
 import { XMLParser } from "fast-xml-parser";
 
-import {
-	type AsyncStorageError,
-	type NetworkFetchError,
-	ParseError,
-} from "./errors";
-import { fetchText, readStorage, writeStorage } from "./http";
+import { STORAGE_KEYS } from "@/constants/storageKeys";
+import { ParseError, type AsyncStorageError } from "./errors";
+import { fetchBothAndMerge } from "./configLoader";
+import { readStorage, writeStorage } from "./http";
 
-const CACHE_KEY = "esFindRules_v1";
+const CACHE_KEY = STORAGE_KEYS.ES_FIND_RULES;
 const OFFICIAL_URL =
 	"https://gitlab.com/es-de/emulationstation-de/-/raw/master/resources/systems/android/es_find_rules.xml";
 const CUSTOM_URL =
@@ -42,32 +40,26 @@ export function parseXml(xml: string): FindRules {
 	return result;
 }
 
-const parseXmlEffect = (xml: string): Effect.Effect<FindRules, ParseError> =>
+const parseCached = (raw: string): Effect.Effect<FindRules, ParseError> =>
 	Effect.try({
-		try: () => parseXml(xml),
-		catch: (e) => new ParseError({ source: "xml", cause: e }),
+		try: () => JSON.parse(raw) as FindRules,
+		catch: (e) => new ParseError({ source: "json", cause: e }),
 	});
-
-const fetchAndParse = (
-	url: string,
-): Effect.Effect<FindRules, NetworkFetchError | ParseError> =>
-	fetchText(url).pipe(Effect.flatMap(parseXmlEffect));
 
 export const getFindRules = (
 	forceRefresh = false,
-): Effect.Effect<FindRules, AsyncStorageError> =>
+): Effect.Effect<FindRules, AsyncStorageError | ParseError> =>
 	Effect.gen(function* () {
 		const cached = yield* readStorage(CACHE_KEY);
-		if (!forceRefresh && cached) return JSON.parse(cached) as FindRules;
+		if (!forceRefresh && cached) return yield* parseCached(cached);
 
-		const [officialResult, customResult] = yield* Effect.all(
-			[fetchAndParse(OFFICIAL_URL), fetchAndParse(CUSTOM_URL)],
-			{ mode: "either" },
+		const merged = yield* fetchBothAndMerge(
+			OFFICIAL_URL,
+			CUSTOM_URL,
+			parseXml,
+			(official, custom) => ({ ...official, ...custom }),
+			{} as FindRules,
 		);
-
-		const official = Either.isRight(officialResult) ? officialResult.right : {};
-		const custom = Either.isRight(customResult) ? customResult.right : {};
-		const merged = { ...official, ...custom };
 
 		if (Object.keys(merged).length > 0) {
 			yield* writeStorage(CACHE_KEY, JSON.stringify(merged)).pipe(
@@ -76,5 +68,6 @@ export const getFindRules = (
 			return merged;
 		}
 
-		return cached ? (JSON.parse(cached) as FindRules) : {};
+		if (!cached) return {};
+		return yield* parseCached(cached);
 	});

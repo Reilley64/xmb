@@ -1,11 +1,12 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Effect, Fiber } from "effect";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { Game, System } from "@/data/systems";
+import { STORAGE_KEYS } from "@/constants/storageKeys";
 import { getDb } from "@/services/db";
-import { AsyncStorageError, DatabaseError } from "@/services/errors";
-import { ROM_BASE_PATH_KEY, scanRoms } from "@/services/romScanner";
+import { DatabaseError } from "@/services/errors";
+import { writeStorage } from "@/services/http";
+import { scanRoms } from "@/services/romScanner";
 import type { EsSystem } from "@/services/systemConfig";
 import { getSystemConfig } from "@/services/systemConfig";
 
@@ -47,25 +48,16 @@ export function useRomLibrary() {
 					{ concurrency: "unbounded" },
 				);
 
-				const [allGames, recent] = yield* Effect.all(
-					[
-						Effect.tryPromise({
-							try: () =>
-								db.getAllAsync<GameRow>(
-									"SELECT id, system_id, title, file_path, last_played, play_count FROM games ORDER BY title",
-								),
-							catch: (e) => new DatabaseError({ op: "query", cause: e }),
-						}),
-						Effect.tryPromise({
-							try: () =>
-								db.getAllAsync<GameRow>(
-									"SELECT id, system_id, title, file_path, last_played, play_count FROM games WHERE last_played IS NOT NULL ORDER BY last_played DESC",
-								),
-							catch: (e) => new DatabaseError({ op: "query", cause: e }),
-						}),
-					],
-					{ concurrency: "unbounded" },
-				);
+				const allGames = yield* Effect.tryPromise({
+					try: () =>
+						db.getAllAsync<GameRow>(
+							"SELECT id, system_id, title, file_path, last_played, play_count FROM games ORDER BY title",
+						),
+					catch: (e) => new DatabaseError({ op: "query", cause: e }),
+				});
+				const recent = allGames
+					.filter((g) => g.last_played != null)
+					.sort((a, b) => (b.last_played ?? 0) - (a.last_played ?? 0));
 
 				const gamesBySystem = new Map<string, GameRow[]>();
 				for (const g of allGames) {
@@ -111,15 +103,7 @@ export function useRomLibrary() {
 	const setBasePathEffect = useCallback(
 		(path: string) =>
 			Effect.gen(function* () {
-				yield* Effect.tryPromise({
-					try: () => AsyncStorage.setItem(ROM_BASE_PATH_KEY, path),
-					catch: (e) =>
-						new AsyncStorageError({
-							op: "set",
-							key: ROM_BASE_PATH_KEY,
-							cause: e,
-						}),
-				});
+				yield* writeStorage(STORAGE_KEYS.ROM_BASE_PATH, path);
 				yield* scanRoms(path).pipe(Effect.catchAll(() => Effect.void));
 				yield* loadEffect.pipe(Effect.catchAll(() => Effect.void));
 			}),
@@ -137,13 +121,18 @@ export function useRomLibrary() {
 		const scanFiber = Effect.runFork(scanAndLoadEffect);
 
 		return () => {
-			Effect.runFork(Fiber.interrupt(loadFiber));
-			Effect.runFork(Fiber.interrupt(scanFiber));
+			Effect.runFork(
+				Effect.all([Fiber.interrupt(loadFiber), Fiber.interrupt(scanFiber)]),
+			);
 		};
 	}, [loadEffect, scanAndLoadEffect]);
 
 	const setRomBasePath = useCallback(
-		(path: string) => Effect.runPromise(setBasePathEffect(path)),
+		(path: string) => {
+			Effect.runPromise(setBasePathEffect(path)).catch((e) =>
+				console.error("[useRomLibrary] setRomBasePath", e),
+			);
+		},
 		[setBasePathEffect],
 	);
 

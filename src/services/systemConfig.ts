@@ -1,19 +1,20 @@
-import { Effect, Either } from "effect";
+import { Effect } from "effect";
 import { XMLParser } from "fast-xml-parser";
 
+import { STORAGE_KEYS } from "@/constants/storageKeys";
 import {
 	type AsyncStorageError,
 	ConfigUnavailableError,
-	type NetworkFetchError,
 	ParseError,
 } from "./errors";
-import { fetchText, readStorage, writeStorage } from "./http";
+import { fetchBothAndMerge } from "./configLoader";
+import { readStorage, writeStorage } from "./http";
 
 const OFFICIAL_URL =
 	"https://gitlab.com/es-de/emulationstation-de/-/raw/v3.4.1/resources/systems/android/es_systems.xml";
 const CUSTOM_URL =
 	"https://github.com/GlazedBelmont/es-de-android-custom-systems/releases/download/v1.49/es_systems.xml";
-const CACHE_KEY = "esSystemConfig_v2";
+const CACHE_KEY = STORAGE_KEYS.ES_SYSTEM_CONFIG;
 
 export interface EsSystem {
 	name: string;
@@ -29,7 +30,7 @@ export function parseExtensions(raw: string): string[] {
 				.trim()
 				.split(/\s+/)
 				.filter(Boolean)
-				.map((e) => e.toLowerCase()),
+				.map((ext) => ext.toLowerCase()),
 		),
 	];
 }
@@ -63,63 +64,58 @@ export function parseXml(xml: string): EsSystem[] {
 	}));
 }
 
-const parseXmlEffect = (xml: string): Effect.Effect<EsSystem[], ParseError> =>
-	Effect.try({
-		try: () => parseXml(xml),
-		catch: (e) => new ParseError({ source: "xml", cause: e }),
-	});
-
-const fetchAndParse = (
-	url: string,
-): Effect.Effect<EsSystem[], NetworkFetchError | ParseError> =>
-	fetchText(url).pipe(Effect.flatMap(parseXmlEffect));
-
 const fetchMergeAndCache: Effect.Effect<
 	EsSystem[],
-	AsyncStorageError | ConfigUnavailableError
+	AsyncStorageError | ConfigUnavailableError | ParseError
 > = Effect.gen(function* () {
-	const [officialResult, customResult] = yield* Effect.all(
-		[fetchAndParse(OFFICIAL_URL), fetchAndParse(CUSTOM_URL)],
-		{ mode: "either" },
+	const merged = yield* fetchBothAndMerge(
+		OFFICIAL_URL,
+		CUSTOM_URL,
+		parseXml,
+		(official, custom) => {
+			const map = new Map(official.map((s) => [s.name, s]));
+			for (const s of custom) map.set(s.name, s);
+			return [...map.values()];
+		},
+		[],
 	);
 
-	const official = Either.isRight(officialResult) ? officialResult.right : [];
-	const custom = Either.isRight(customResult) ? customResult.right : [];
-
-	// Custom entries override official ones by system name
-	const merged = new Map(official.map((s) => [s.name, s]));
-	for (const s of custom) merged.set(s.name, s);
-
-	if (merged.size === 0) {
-		yield* Effect.fail(
-			new ConfigUnavailableError({ resource: "systemConfig" }),
-		);
+	if (merged.length === 0) {
+		yield* Effect.fail(new ConfigUnavailableError({ resource: "systemConfig" }));
 	}
 
-	const systems = [...merged.values()];
-	yield* writeStorage(CACHE_KEY, JSON.stringify(systems)).pipe(
+	yield* writeStorage(CACHE_KEY, JSON.stringify(merged)).pipe(
 		Effect.orElse(() => Effect.void),
 	);
-	return systems;
+	return merged;
 });
 
 export const getSystemConfig = (
 	forceRefresh = false,
-): Effect.Effect<EsSystem[], AsyncStorageError | ConfigUnavailableError> =>
+): Effect.Effect<EsSystem[], AsyncStorageError | ConfigUnavailableError | ParseError> =>
 	Effect.gen(function* () {
 		const cached = yield* readStorage(CACHE_KEY);
 
 		if (!forceRefresh && cached) {
-			return JSON.parse(cached) as EsSystem[];
+			return yield* Effect.try({
+				try: () => JSON.parse(cached) as EsSystem[],
+				catch: (e) => new ParseError({ source: "json", cause: e }),
+			});
 		}
 
 		return yield* fetchMergeAndCache.pipe(
-			Effect.catchTag("ConfigUnavailableError", () =>
-				cached
-					? Effect.succeed(JSON.parse(cached) as EsSystem[])
-					: Effect.fail(
+			Effect.catchTag(
+				"ConfigUnavailableError",
+				(): Effect.Effect<EsSystem[], ConfigUnavailableError | ParseError> => {
+					if (!cached)
+						return Effect.fail(
 							new ConfigUnavailableError({ resource: "systemConfig" }),
-						),
+						);
+					return Effect.try({
+						try: () => JSON.parse(cached) as EsSystem[],
+						catch: (e) => new ParseError({ source: "json", cause: e }),
+					});
+				},
 			),
 		);
 	});

@@ -1,4 +1,3 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
 	errorCodes,
 	isErrorWithCode,
@@ -6,18 +5,18 @@ import {
 } from "@react-native-documents/picker";
 import { Effect } from "effect";
 import { useState } from "react";
-import { NativeModules } from "react-native";
+import { NativeModules, Text, View } from "react-native";
+import { STORAGE_KEYS } from "@/constants/storageKeys";
 import { GameItem } from "@/components/molecules/game-item";
 import { SettingsItem } from "@/components/molecules/settings-item";
 import { EmulatorPicker } from "@/components/organisms/emulator-picker";
 import { MenuList } from "@/components/organisms/menu-list";
 import { XmbLayout } from "@/components/templates/xmb-layout";
-import type { Game, System } from "@/data/systems";
 import { useControllerInput } from "@/hooks/useControllerInput";
+import { useLauncher } from "@/hooks/useLauncher";
 import { useRomLibrary } from "@/hooks/useRomLibrary";
 import { getFindRules } from "@/services/findRules";
-import type { LaunchIntent } from "@/services/launcher";
-import { launchRom, resolveCommands } from "@/services/launcher";
+import { writeStorage } from "@/services/http";
 import { getSystemConfig } from "@/services/systemConfig";
 
 // content://com.android.externalstorage.documents/tree/primary%3AROMs → /storage/emulated/0/ROMs
@@ -37,42 +36,21 @@ export function Xmb() {
 	const { systems, recentGames, setRomBasePath, refresh } = useRomLibrary();
 	const recentShown = recentGames.length > 0;
 	const recentOffset = recentShown ? 1 : 0;
-	const [colIdx, setColIdx] = useState(1);
-	const [pendingLaunch, setPendingLaunch] = useState<{
-		game: Game;
-		intents: LaunchIntent[];
-	} | null>(null);
+	const [colIdx, setColIdx] = useState(0);
+	const {
+		pendingLaunch,
+		launchError,
+		launch,
+		launchFromRecent,
+		confirmPendingLaunch,
+		cancelPendingLaunch,
+		clearError,
+	} = useLauncher(systems);
 
 	function navCol(delta: -1 | 1) {
 		setColIdx((prev) =>
 			Math.max(0, Math.min(systems.length + recentOffset, prev + delta)),
 		);
-	}
-
-	function handleRecentGameConfirm(game: Game) {
-		const system = systems.find((s) => s.id === game.system_id);
-		if (!system) return;
-		handleGameConfirm(game, system);
-	}
-
-	async function handleGameConfirm(game: Game, system: System) {
-		const launchable = await Effect.runPromise(
-			resolveCommands(system.commands, game.file_path).pipe(
-				Effect.orElseSucceed(() => [] as LaunchIntent[]),
-			),
-		);
-		if (launchable.length === 0) return;
-		if (launchable.length === 1) {
-			Effect.runFork(
-				launchRom(game, launchable[0]).pipe(
-					Effect.catchAll((e) =>
-						Effect.sync(() => console.error("[launchRom]", e)),
-					),
-				),
-			);
-		} else {
-			setPendingLaunch({ game, intents: launchable });
-		}
 	}
 
 	async function handleChooseRomsFolder() {
@@ -86,7 +64,7 @@ export function Xmb() {
 		try {
 			const result = await pickDirectory();
 			if (result?.uri) {
-				await AsyncStorage.setItem("romSafTreeUri", result.uri);
+				await Effect.runPromise(writeStorage(STORAGE_KEYS.ROM_SAF_TREE_URI, result.uri));
 				const path = contentUriToPath(result.uri);
 				await setRomBasePath(path);
 			}
@@ -108,7 +86,7 @@ export function Xmb() {
 	useControllerInput({
 		onLeft: pendingLaunch ? undefined : () => navCol(-1),
 		onRight: pendingLaunch ? undefined : () => navCol(1),
-		onBack: pendingLaunch ? () => setPendingLaunch(null) : undefined,
+		onBack: pendingLaunch ? cancelPendingLaunch : undefined,
 	});
 
 	return (
@@ -118,19 +96,19 @@ export function Xmb() {
 				pendingLaunch ? (
 					<EmulatorPicker
 						intents={pendingLaunch.intents}
-						onSelect={(intent) => {
-							setPendingLaunch(null);
-							Effect.runFork(
-								launchRom(pendingLaunch.game, intent).pipe(
-									Effect.catchAll((e) =>
-										Effect.sync(() => console.error("[launchRom]", e)),
-									),
-								),
-							);
-						}}
-						onCancel={() => setPendingLaunch(null)}
+						onSelect={confirmPendingLaunch}
+						onCancel={cancelPendingLaunch}
 					/>
-				) : undefined
+				) : launchError ? (
+					<View className="absolute inset-x-0 bottom-8 items-center" pointerEvents="box-none">
+						<Text
+							className="rounded bg-black/70 px-4 py-2 text-red-400 text-sm"
+							onPress={clearError}
+						>
+							{launchError}
+						</Text>
+					</View>
+				) : null
 			}
 		>
 			<MenuList
@@ -161,7 +139,7 @@ export function Xmb() {
 						<GameItem
 							key={game.id}
 							title={game.title}
-							onConfirm={() => handleRecentGameConfirm(game)}
+							onConfirm={() => launchFromRecent(game)}
 						/>
 					))}
 				</MenuList>
@@ -179,7 +157,7 @@ export function Xmb() {
 						<GameItem
 							key={game.id}
 							title={game.title}
-							onConfirm={() => handleGameConfirm(game, system)}
+							onConfirm={() => launch(game, system)}
 						/>
 					))}
 				</MenuList>
